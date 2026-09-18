@@ -198,3 +198,86 @@ class ObservatoryTests(AttendanceFixture):
         self.assertEqual(response.json()['people'],[])
         self.assertEqual(response.json()['pulse'],[])
         self.assertIsNone(response.json()['session'])
+
+    def test_named_intruder_is_not_enrolled_and_keeps_evidence(self):
+        ident=Identity.objects.create(course=self.course,state='intruder')
+        span=self.span(0,50,ident)
+        before=Student.objects.count()
+        response=self.client.post(f'/identity/{ident.pk}/',{'action':'name_identity','display_name':'Alex','classification':'intruder'})
+        self.assertEqual(response.status_code,302)
+        ident.refresh_from_db();span.refresh_from_db()
+        self.assertEqual((str(ident),ident.state),('Alex','intruder'))
+        self.assertEqual(span.identity_id,ident.pk)
+        self.assertEqual(Student.objects.count(),before)
+        self.assertFalse(Participant.objects.filter(student__identity=ident).exists())
+        self.assertContains(self.client.get('/unknown/'),'Alex')
+
+    def test_visitor_can_be_named_in_archive_then_enrolled_explicitly(self):
+        ident=Identity.objects.create(course=self.course,state='visitor')
+        self.span(0,80,ident)
+        self.client.post(f'/identity/{ident.pk}/',{'action':'name_identity','display_name':'Visita','classification':'visitor'})
+        self.assertContains(self.client.get('/unknown/'),'Visita')
+        self.client.post(f'/identity/{ident.pk}/',{'action':'identify','name':'Nuevo alumno','number':'002'})
+        ident.refresh_from_db()
+        self.assertEqual(ident.state,'student')
+        self.assertEqual(Attendance.objects.get(student=ident.student,session=self.s).percentage,80)
+
+    def test_name_action_cannot_create_student_or_bypass_role(self):
+        ident=Identity.objects.create(course=self.course,state='intruder')
+        self.client.post(f'/identity/{ident.pk}/',{'action':'name_identity','display_name':'Alex','classification':'student'})
+        ident.refresh_from_db();self.assertEqual(ident.display_name,'')
+        self.user.is_staff=False;self.user.save()
+        self.assertEqual(self.client.post(f'/identity/{ident.pk}/',{'action':'name_identity','display_name':'Alex'}).status_code,403)
+
+    def test_away_thresholds_require_strict_order(self):
+        from classroom.forms import SettingsForm
+        from django.forms.models import model_to_dict
+        cfg=SystemSettings.get();values=model_to_dict(cfg)
+        values.update(away_notice=30,away_brief=30,away_long=300)
+        self.assertFalse(SettingsForm(values,instance=cfg).is_valid())
+        values['away_brief']=120
+        self.assertTrue(SettingsForm(values,instance=cfg).is_valid())
+
+
+class AwayMonitorTests(TestCase):
+    def setUp(self):
+        from classroom.services.away import AwayMonitor
+        from types import SimpleNamespace
+        self.monitor=AwayMonitor()
+        self.cfg=SimpleNamespace(away_notice=30,away_brief=120,away_long=300)
+        self.person=dict(identity=1,state='student',name='Alumno')
+
+    def feed(self,start,end,people,session=1):
+        for tick in range(start,end+1):self.monitor.update(session,tick,people,self.cfg)
+
+    def test_thresholds_and_return(self):
+        self.feed(0,0,[self.person]);self.feed(1,29,[])
+        self.assertEqual(self.monitor.alerts,[])
+        self.feed(30,30,[]);self.assertEqual(self.monitor.alerts[0]['level'],'notice')
+        self.feed(31,120,[]);self.assertEqual(self.monitor.alerts[0]['level'],'brief')
+        self.feed(121,300,[]);self.assertEqual(self.monitor.alerts[0]['level'],'long')
+        self.feed(301,301,[self.person]);self.assertEqual(self.monitor.alerts[0]['level'],'returned')
+        self.feed(302,332,[self.person]);self.assertEqual(self.monitor.alerts,[])
+
+    def test_unknowns_and_never_seen_students_do_not_create_alerts(self):
+        self.feed(0,0,[dict(identity=2,state='intruder',name='Visita')]);self.feed(1,400,[])
+        self.assertEqual(self.monitor.alerts,[])
+
+    def test_stall_reset_pause_and_other_session_do_not_count_gaps(self):
+        self.feed(0,0,[self.person]);self.feed(1,40,[])
+        self.monitor.update(1,100,[],self.cfg)
+        self.assertEqual(self.monitor.alerts,[])
+        self.feed(101,101,[self.person]);self.feed(102,150,[])
+        self.monitor.reset();self.feed(151,151,[])
+        self.assertEqual(self.monitor.alerts,[])
+        self.feed(152,152,[self.person]);self.feed(153,200,[])
+        self.feed(201,201,[],session=2);self.assertEqual(self.monitor.alerts,[])
+
+    def test_collective_loss_is_suppressed_until_reacquired(self):
+        group=[dict(identity=i,state='student',name=f'Alumno {i}') for i in range(4)]
+        self.feed(0,0,group);self.feed(1,400,[])
+        self.assertTrue(self.monitor.group_warning);self.assertEqual(self.monitor.alerts,[])
+        self.feed(401,401,group)
+        self.assertFalse(self.monitor.group_warning);self.assertEqual(self.monitor.alerts,[])
+        self.feed(402,432,group[1:])
+        self.assertEqual(self.monitor.alerts[0]['identity'],0)

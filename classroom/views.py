@@ -174,6 +174,13 @@ def identify(request,pk):
                     for s in ClassSession.objects.filter(course=ident.course,presences__identity=student.identity).distinct():
                         Participant.objects.get_or_create(session=s,student=student)
                         if s.status in ['finished','interrupted']:calculate(s)
+                elif action=='name_identity':
+                    if ident.state=='student':raise ValueError('Edita el nombre del alumno desde su ficha.')
+                    name=request.POST.get('display_name','').strip()
+                    classification=request.POST.get('classification',ident.state)
+                    if not name or len(name)>160:raise ValueError('Indica un nombre o alias de hasta 160 caracteres.')
+                    if classification not in ('pending','visitor','intruder','ignored'):raise ValueError('Clasificación inválida.')
+                    ident.display_name=name;ident.state=classification;ident.save()
                 elif action in ['visitor','intruder','ignored','pending']:
                     if ident.state=='student':raise ValueError('No se puede reclasificar un alumno por esta acción.')
                     ident.state=action;ident.save()
@@ -183,6 +190,7 @@ def identify(request,pk):
             for span in engine.spans.values():
                 span.refresh_from_db(fields=['identity']);span.save()
             engine.tracks={};engine.spans={};engine.gallery_epoch+=1
+            engine.away.reset()
             messages.success(request,'Identidad actualizada.')
         except (ValueError,IntegrityError) as exc:messages.error(request,f'No se guardó: {exc}')
     return redirect(f'/unknown/?course={ident.course_id}')

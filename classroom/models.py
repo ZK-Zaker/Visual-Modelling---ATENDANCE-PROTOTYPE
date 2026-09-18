@@ -13,10 +13,11 @@ class Identity(models.Model):
     STATES = [('pending','Pendiente'),('student','Estudiante'),('visitor','Visitante'),('intruder','Posible intruso'),('ignored','Ignorado')]
     course = models.ForeignKey(Course,on_delete=models.PROTECT)
     state = models.CharField(max_length=16,choices=STATES,default='pending')
+    display_name = models.CharField(max_length=160,blank=True,default='')
     created = models.DateTimeField(auto_now_add=True)
     def __str__(self):
         try: return self.student.name
-        except Student.DoesNotExist: return f'Unknown {self.pk:03d}'
+        except Student.DoesNotExist: return self.display_name or f'Unknown {self.pk:03d}'
 
 class Student(models.Model):
     identity = models.OneToOneField(Identity,on_delete=models.PROTECT,related_name='student')
@@ -46,10 +47,15 @@ class SystemSettings(models.Model):
     similarity = models.FloatField(default=.45,validators=[MinValueValidator(.1),MaxValueValidator(.99)])
     reference_count = models.PositiveIntegerField(default=5,validators=[MinValueValidator(1),MaxValueValidator(10)])
     lost_seconds = models.FloatField(default=2,validators=[MinValueValidator(.5),MaxValueValidator(5)])
+    away_notice = models.PositiveIntegerField(default=30,validators=[MinValueValidator(5),MaxValueValidator(3600)])
+    away_brief = models.PositiveIntegerField(default=120,validators=[MinValueValidator(10),MaxValueValidator(7200)])
+    away_long = models.PositiveIntegerField(default=300,validators=[MinValueValidator(15),MaxValueValidator(14400)])
     width = models.PositiveIntegerField(default=640,validators=[MinValueValidator(320),MaxValueValidator(1920)])
     height = models.PositiveIntegerField(default=480,validators=[MinValueValidator(240),MaxValueValidator(1080)])
     def clean(self):
         if self.partial >= self.present: raise ValidationError('Parcial debe ser menor que Presente.')
+        if not self.away_notice < self.away_brief < self.away_long:
+            raise ValidationError('Los avisos deben cumplir: fuera de vista < pausa breve < ausencia prolongada.')
     @classmethod
     def get(cls): return cls.objects.get_or_create(pk=1)[0]
 

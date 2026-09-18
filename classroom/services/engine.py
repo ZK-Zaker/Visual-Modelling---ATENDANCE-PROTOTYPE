@@ -6,6 +6,7 @@ from django.db import close_old_connections
 from django.core.files.base import ContentFile
 from classroom.models import *
 from .attendance import calculate
+from .away import AwayMonitor
 log=logging.getLogger(__name__)
 
 class Engine:
@@ -14,12 +15,14 @@ class Engine:
         self.frame=None;self.error='';self.camera=None;self.session_id=None;self.detected=[]
         self.fps=0;self.resolution='';self.tracks={};self.spans={};self.last_frame=0;self.gallery_epoch=0
         self.pulse=deque(maxlen=601);self.pulse_at=0;self.pulse_session=None;self.pulse_break=True
+        self.away=AwayMonitor()
 
     def status(self):
         with self.lock:
             return dict(connected=bool(self.thread and self.thread.is_alive() and self.frame),camera=self.camera,
                 session=self.session_id,fps=round(self.fps,1),resolution=self.resolution,error=self.error,
-                people=list(self.detected),count=len(self.detected),pulse=list(self.pulse))
+                people=list(self.detected),count=len(self.detected),pulse=list(self.pulse),
+                away=list(self.away.alerts),group_warning=self.away.group_warning)
 
     def sample_pulse(self, session, now, people):
         if self.pulse_session!=session:
@@ -75,6 +78,7 @@ class Engine:
             else: raise ValueError('Acción desconocida.')
             Event.objects.create(session=s,kind=action)
             self.pulse_break=True;self.detected=[]
+            self.away.reset()
 
     def gallery(self,course):
         from django.db.models import Q
@@ -169,7 +173,9 @@ class Engine:
                         for span in self.spans.values(): span.save()
                         s.heartbeat=now;s.save(update_fields=['heartbeat']);last_flush=t
                     self.detected=visible;self.resolution=f'{frame.shape[1]} × {frame.shape[0]}'
-                    if s: self.sample_pulse(s.pk,now,visible)
+                    if s:
+                        self.sample_pulse(s.pk,now,visible)
+                        self.away.update(s.pk,t,visible,cfg)
                     good,jpg=cv2.imencode('.jpg',frame,[cv2.IMWRITE_JPEG_QUALITY,80])
                     if good: self.frame=jpg.tobytes();self.last_frame=t
                     self.fps=1/max(time.monotonic()-t,.001)
@@ -188,6 +194,7 @@ class Engine:
                     Event.objects.create(session=s,kind='camera_gap',detail=self.error or 'Cámara detenida durante sesión.')
                 self.session_id=None;self.frame=None;self.detected=[];self.spans={}
                 self.pulse_break=True
+                self.away.reset()
             close_old_connections()
 
 engine=Engine()

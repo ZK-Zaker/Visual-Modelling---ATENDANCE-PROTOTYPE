@@ -18,6 +18,14 @@ function renderPulse(s){
  else if(people.some(p=>p.identity===null))insight=`${people.filter(p=>p.identity===null).length} personas visibles todavía sin identidad confirmada.`;
  else insight=`${identified} alumnos identificados en el encuadre actual.`;
  document.querySelector('#pulse-insight').textContent=insight;
+ const notices=document.getElementById('away-notices');
+ if(notices){
+   const alerts=live?(s.away||[]):[];
+   const duration=n=>`${Math.floor(n/60)} min ${n%60} s`;
+   const title={notice:'Fuera del radar',brief:'¿Pausa técnica?',long:'¿Se nos escapó?',returned:'De vuelta al radar'};
+   notices.hidden=!live||(!alerts.length&&!s.group_warning);
+   notices.innerHTML=(s.group_warning?'<p class="capture-caption">Pérdida colectiva de seguimiento: revisa el encuadre. Se suspenden los avisos individuales de las personas afectadas hasta volver a detectarlas.</p>':'')+alerts.slice(0,6).map(a=>`<div class="away-notice away-level-${safe(a.level)}"><span>${safe(title[a.level]||'Fuera de vista')}</span><strong>${safe(a.name)}</strong><small>${a.level==='returned'?'Volvió después de':'Fuera de vista durante'} ${duration(a.seconds)}</small></div>`).join('')+(alerts.length>6?`<p class="capture-caption">${alerts.length-6} avisos adicionales.</p>`:'')+(alerts.length?'<p class="capture-caption">Tiempo sin observar durante captura continua. La cámara no conoce el motivo. Umbrales ajustables en Settings.</p>':'');
+ }
  const ratio=people.length?Math.round(100*usable/people.length):null;
  put('capture-quality',live&&people.length?`<div class="capture-meter" role="meter" aria-label="Personas con rostro útil en el último análisis" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${ratio}"><span style="width:${ratio}%"></span></div><p class="capture-caption">${usable} de ${people.length} con rostro útil en el último análisis. ${usable<people.length?'La distancia, el ángulo, la nitidez o una oclusión pueden limitar la captura.':'Referencias aptas para comparar.'} Esto no es una probabilidad de identidad.</p>`:'');
  if(!points.length)put('pulse-chart',`<p>${live?'Esperando la primera muestra…':'El pulso se construye durante una sesión activa.'}</p>`);

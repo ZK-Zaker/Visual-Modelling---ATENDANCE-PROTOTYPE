@@ -1,0 +1,6 @@
+<form method="post" action="/identity/{{ident.pk}}/" class="identity-name-form">
+  {% csrf_token %}<input type="hidden" name="action" value="name_identity">
+  <label>Nombre o alias<input name="display_name" value="{{ident.display_name}}" maxlength="160" required placeholder="Nombre o alias de esta persona"></label>
+  <label>Clasificación<select name="classification"><option value="pending" {% if ident.state == 'pending' %}selected{% endif %}>Pendiente</option><option value="visitor" {% if ident.state == 'visitor' %}selected{% endif %}>Visitante</option><option value="intruder" {% if ident.state == 'intruder' %}selected{% endif %}>Posible intruso</option><option value="ignored" {% if ident.state == 'ignored' %}selected{% endif %}>Ignorado</option></select></label>
+  <button>Guardar nombre y clasificación</button><p class="caption">Conserva sus apariciones. No lo inscribe como alumno.</p>
+</form>
