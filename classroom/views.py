@@ -13,6 +13,7 @@ from .forms import SettingsForm
 from .services.engine import engine
 from .services.analytics import course_data,session_data
 from .services.attendance import calculate
+from .services.observatory import wanted_cases, recent_signals
 
 def teacher(fn):
     @wraps(fn)
@@ -49,7 +50,10 @@ def page(request,tab='dashboard',pk=None):
         st=get_object_or_404(Student,pk=pk);data=course_data(course)
         context.update(student=st,data=next((x for x in data['students'] if x['id']==st.pk),None),refs=st.identity.references.all())
     if tab=='unknown':
-        context['identities']=Identity.objects.filter(course=course).exclude(state='student').annotate(appearances=Count('presence__session',distinct=True)).order_by('-appearances','-created')
+        cases=wanted_cases(course)
+        context['identities']=[i for i in cases if i.state in ('pending','intruder')]
+        context['resolved_identities']=[i for i in cases if i.state in ('visitor','ignored') or (i.state=='student' and i.portrait)]
+        context['wanted_minutes']=round(sum(i.observed_seconds for i in context['identities'])/60,1)
         context['students']=Student.objects.filter(enrollment__course=course,active=True)
     if tab=='settings':context['form']=SettingsForm(instance=SystemSettings.get())
     return render(request,'app.html',context)
@@ -106,7 +110,16 @@ def camera_action(request,action):
 @login_required
 def live_status(request):
     state=engine.status()
-    if state['session']: state['data']=session_data(ClassSession.objects.get(pk=state['session']))
+    _,course=selected(request)
+    session=ClassSession.objects.filter(pk=state['session']).first() if state['session'] else None
+    if session and session.course_id!=getattr(course,'pk',None):
+        return JsonResponse(dict(connected=False,camera=None,session=None,fps=0,resolution='',error='La cámara está capturando otro curso.',people=[],count=0,pulse=[],events=[]))
+    if session: state['data']=session_data(session)
+    else: session=ClassSession.objects.filter(course=course,status__in=['paused','finished','interrupted']).order_by('-created').first()
+    state['events']=recent_signals(session) if session else []
+    state['session_status']=session.status if session else 'preview'
+    state['session_title']=session.title if session else ''
+    if not state['session']: state['pulse']=[]
     return JsonResponse(state)
 
 @login_required

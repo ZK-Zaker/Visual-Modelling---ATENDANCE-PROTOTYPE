@@ -1,5 +1,6 @@
 """Single-process camera owner. Web requests share one producer; no frame DB writes."""
 import threading,time,logging
+from collections import deque
 from django.utils import timezone
 from django.db import close_old_connections
 from django.core.files.base import ContentFile
@@ -12,12 +13,24 @@ class Engine:
         self.lock=threading.RLock();self.stop_event=threading.Event();self.thread=None
         self.frame=None;self.error='';self.camera=None;self.session_id=None;self.detected=[]
         self.fps=0;self.resolution='';self.tracks={};self.spans={};self.last_frame=0;self.gallery_epoch=0
+        self.pulse=deque(maxlen=601);self.pulse_at=0;self.pulse_session=None;self.pulse_break=True
 
     def status(self):
         with self.lock:
             return dict(connected=bool(self.thread and self.thread.is_alive() and self.frame),camera=self.camera,
                 session=self.session_id,fps=round(self.fps,1),resolution=self.resolution,error=self.error,
-                people=list(self.detected),count=len(self.detected))
+                people=list(self.detected),count=len(self.detected),pulse=list(self.pulse))
+
+    def sample_pulse(self, session, now, people):
+        if self.pulse_session!=session:
+            self.pulse.clear();self.pulse_session=session;self.pulse_at=0;self.pulse_break=True
+        stamp=now.timestamp()
+        if stamp-self.pulse_at<2: return
+        self.pulse.append(dict(at=now.isoformat(),total=len(people),
+            students=sum(p['state']=='student' for p in people),
+            pending=sum(p['state'] in ('pending','intruder') for p in people),
+            unconfirmed=sum(p['identity'] is None for p in people),gap=self.pulse_break))
+        self.pulse_at=stamp;self.pulse_break=False
 
     def start(self, index):
         with self.lock:
@@ -61,6 +74,7 @@ class Engine:
                 self.session_id=None;calculate(s)
             else: raise ValueError('Acción desconocida.')
             Event.objects.create(session=s,kind=action)
+            self.pulse_break=True;self.detected=[]
 
     def gallery(self,course):
         from django.db.models import Q
@@ -106,6 +120,7 @@ class Engine:
                         tr['last']=t;face=None;face_identity=None
                         if t-tr['checked']>.7:
                             tr['checked']=t;face=vision.extract(frame[b:d,a:c])
+                            tr['capture']='usable' if face is not None else 'limited'
                             if face is not None:
                                 candidate=self.resolve(face[0],refs,cfg.similarity);face_identity=candidate
                                 if candidate is not None:
@@ -141,7 +156,7 @@ class Engine:
                                 Event.objects.create(session=s,identity=ident,kind='detected')
                             label=str(ident);state=ident.state
                         else: label=f'Track {tid}';state='unidentified'
-                        visible.append(dict(track=tid,identity=ident.pk if ident else None,name=label,state=state))
+                        visible.append(dict(track=tid,identity=ident.pk if ident else None,name=label,state=state,capture=tr.get('capture','pending')))
                         color=(170,220,35) if state=='student' else (60,190,245)
                         cv2.rectangle(frame,(a,b),(c,d),color,2)
                         cv2.putText(frame,label.encode('ascii','replace').decode(),(a,max(20,b-8)),cv2.FONT_HERSHEY_SIMPLEX,.55,color,2)
@@ -154,6 +169,7 @@ class Engine:
                         for span in self.spans.values(): span.save()
                         s.heartbeat=now;s.save(update_fields=['heartbeat']);last_flush=t
                     self.detected=visible;self.resolution=f'{frame.shape[1]} × {frame.shape[0]}'
+                    if s: self.sample_pulse(s.pk,now,visible)
                     good,jpg=cv2.imencode('.jpg',frame,[cv2.IMWRITE_JPEG_QUALITY,80])
                     if good: self.frame=jpg.tobytes();self.last_frame=t
                     self.fps=1/max(time.monotonic()-t,.001)
@@ -171,6 +187,7 @@ class Engine:
                     s.status='paused';s.review=True;s.save()
                     Event.objects.create(session=s,kind='camera_gap',detail=self.error or 'Cámara detenida durante sesión.')
                 self.session_id=None;self.frame=None;self.detected=[];self.spans={}
+                self.pulse_break=True
             close_old_connections()
 
 engine=Engine()

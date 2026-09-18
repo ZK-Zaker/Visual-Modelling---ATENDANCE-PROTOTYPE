@@ -146,3 +146,55 @@ class EngineIntegrationTests(AttendanceFixture):
         from types import SimpleNamespace
         refs=[SimpleNamespace(model='sface-2021dec',embedding=[1.,0.],identity_id=1),SimpleNamespace(model='sface-2021dec',embedding=[.999,.01],identity_id=2)]
         self.assertIsNone(Engine().resolve(np.array([1.,0.]),refs,.45))
+
+
+class ObservatoryTests(AttendanceFixture):
+    def setUp(self):
+        super().setUp()
+        self.user=get_user_model().objects.create_user('observer-test',password='test-password',is_staff=True)
+        self.client.force_login(self.user)
+    def test_wanted_unions_overlaps_and_ranks_sessions_first(self):
+        from classroom.services.observatory import wanted_cases
+        one=Identity.objects.create(course=self.course)
+        two=Identity.objects.create(course=self.course,state='intruder')
+        self.span(0,60,one);self.span(20,80,one)
+        self.span(0,2,two)
+        other=ClassSession.objects.create(course=self.course,title='Otra')
+        Presence.objects.create(session=other,identity=two,start=self.start,end=self.start+timedelta(seconds=2))
+        cases=wanted_cases(self.course)
+        self.assertEqual(cases[0].pk,two.pk)
+        self.assertEqual(next(i for i in cases if i.pk==one.pk).observed_seconds,80)
+        response=self.client.get('/unknown/')
+        self.assertContains(response,'WANTED')
+        self.assertEqual(len(response.context['identities']),2)
+
+    def test_resolved_cases_leave_open_board(self):
+        ident=Identity.objects.create(course=self.course)
+        self.client.post(f'/identity/{ident.pk}/',{'action':'visitor'})
+        response=self.client.get('/unknown/')
+        self.assertEqual(len(response.context['identities']),0)
+        self.assertEqual(response.context['resolved_identities'][0].pk,ident.pk)
+
+    def test_pulse_sampling_pause_and_session_reset(self):
+        e=Engine()
+        people=[dict(state='student',identity=1),dict(state='pending',identity=2),dict(state='unidentified',identity=None)]
+        e.sample_pulse(1,self.start,people)
+        e.sample_pulse(1,self.start+timedelta(seconds=1),[])
+        self.assertEqual(len(e.pulse),1)
+        self.assertEqual(e.pulse[0]['students'],1)
+        self.assertEqual(e.pulse[0]['pending'],1)
+        self.assertEqual(e.pulse[0]['unconfirmed'],1)
+        e.pulse_break=True
+        e.sample_pulse(1,self.start+timedelta(seconds=3),[])
+        self.assertTrue(e.pulse[-1]['gap'])
+        e.sample_pulse(2,self.start+timedelta(seconds=4),[])
+        self.assertEqual(len(e.pulse),1)
+        self.assertEqual(e.pulse[-1]['total'],0)
+
+    def test_live_does_not_leak_other_course(self):
+        other=Course.objects.create(name='Otro curso')
+        with patch.object(engine,'status',return_value=dict(session=self.s.pk)):
+            response=self.client.get(f'/api/live/?course={other.pk}')
+        self.assertEqual(response.json()['people'],[])
+        self.assertEqual(response.json()['pulse'],[])
+        self.assertIsNone(response.json()['session'])
