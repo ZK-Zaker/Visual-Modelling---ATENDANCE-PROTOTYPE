@@ -1,0 +1,11 @@
+# Dependencias directas observadas durante validación Linux/Python 3.12.14.
+# Usa requirements.txt para resolver dependencias compatibles en tu equipo.
+Django==5.2.17
+numpy==2.3.5
+opencv-python==4.14.0.94
+ultralytics==8.4.154
+lap==0.5.13
+Pillow==12.3.0
+reportlab==4.4.9
+# PyTorch CPU se instaló desde https://download.pytorch.org/whl/cpu
+# torch 2.14.0+cpu; torchvision 0.29.0+cpu

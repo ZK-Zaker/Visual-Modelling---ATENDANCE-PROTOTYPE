@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+*.sqlite3
+.secret
+media/*
+model_weights/*.pt
+model_weights/*.onnx
+model_weights/*.tmp
+
+.env
+.env.*
+!.env.example
+.DS_Store
+!media/README.md
