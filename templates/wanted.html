@@ -1,0 +1,25 @@
+<section class="wanted-intro"><div><span class="eyebrow">ATTENDANCE VIZ / ARCHIVO DE IDENTIDADES</span><h2>MOST WANTED</h2><p>Caras conocidas. Nombres pendientes.</p></div><div class="case-totals"><strong>{{identities|length}}</strong><span>expedientes abiertos<br>{{wanted_minutes}} min observados por resolver</span></div></section>
+<div class="wanted-toolbar"><p>Ordenados por sesiones observadas y, después, tiempo acumulado.</p><label>Mostrar <select id="wanted-filter"><option value="all">Todos los casos abiertos</option><option value="pending">Pendientes de identificar</option><option value="intruder">Marcados como posible intruso</option></select></label></div>
+<p class="caption">Una identidad desconocida no implica una intrusión. Los intervalos de seguimiento no equivalen a entradas físicas al salón.</p>
+<div class="wanted-grid">
+{% for ident in identities %}
+<article class="wanted-poster" data-case-state="{{ident.state}}">
+  <div class="poster-meta"><span>EXPEDIENTE #{{ident.pk|stringformat:'03d'}}</span><span>PRIORIDAD {{forloop.counter|stringformat:'02d'}}</span></div>
+  <h3>WANTED</h3><div class="poster-subtitle">SE BUSCA UN NOMBRE</div>
+  <div class="poster-portrait">{% if ident.portrait %}<img src="/reference/{{ident.portrait.pk}}/" alt="Referencia capturada de la identidad {{ident.pk}}" loading="lazy">{% else %}<span aria-label="Sin referencia facial">?</span>{% endif %}<span class="case-stamp">{{ident.get_state_display}}</span></div>
+  <div class="poster-name">UNKNOWN {{ident.pk|stringformat:'03d'}}</div>
+  <div class="poster-facts"><div><strong>{{ident.appearances}}</strong><span>sesiones observadas</span></div><div><strong>{{ident.observed_minutes}}</strong><span>minutos registrados</span></div></div>
+  <div class="poster-reward"><span>RECOMPENSA</span><strong>Una historia con nombre.</strong><small>Resolver {{ident.observed_minutes}} min de presencia sin atribuir.</small></div>
+  <p class="poster-last">Última observación<br><b>{{ident.last_seen|date:'d M Y · H:i'|default:'Aún sin intervalos'}}</b></p>
+  <details class="case-details"><summary>Examinar expediente & resolver</summary>
+    <div class="references">{% for r in ident.references.all %}<img src="/reference/{{r.pk}}/" alt="Referencia {{forloop.counter}} del expediente {{ident.pk}}" loading="lazy">{% endfor %}</div>
+    {% if request.user.is_staff %}
+    <form method="post" action="/identity/{{ident.pk}}/">{% csrf_token %}<input type="hidden" name="action" value="identify"><label>Vincular con alumno<select name="target"><option value="">Crear alumno nuevo</option>{% for st in students %}<option value="{{st.pk}}">{{st.name}} · {{st.number}}</option>{% endfor %}</select></label><label>Nombre nuevo<input name="name" maxlength="160"></label><label>Matrícula nueva<input name="number" maxlength="40"></label><button>Resolver identidad</button></form>
+    <form method="post" action="/identity/{{ident.pk}}/" class="controls">{% csrf_token %}<label>Clasificación<select name="action"><option value="visitor">Visitante</option><option value="pending">Pendiente</option><option value="intruder">Posible intruso</option><option value="ignored">Ignorar</option></select></label><button class="secondary">Clasificar</button></form>
+    {% else %}<p>El profesor puede resolver esta identidad.</p>{% endif %}
+  </details>
+</article>
+{% empty %}<section class="wanted-empty"><span>✓</span><h3>No hay nombres pendientes.</h3><p>Los expedientes se crean cuando se captura un rostro útil durante una sesión.</p></section>{% endfor %}
+</div>
+<p id="wanted-no-match" hidden>No hay expedientes con esta clasificación.</p>
+{% if resolved_identities %}<details class="resolved-cases"><summary>Archivo clasificado · {{resolved_identities|length}} casos</summary>{% for ident in resolved_identities %}<div class="session-item"><div><strong>{{ident}}</strong><small>{{ident.get_state_display}} · {{ident.appearances}} sesiones</small></div><span class="resolved-stamp">{% if ident.state == 'student' %}IDENTIFIED{% else %}CLASIFICADO{% endif %}</span>{% if request.user.is_staff and ident.state != 'student' %}<form method="post" action="/identity/{{ident.pk}}/">{% csrf_token %}<input type="hidden" name="action" value="pending"><button class="secondary">Reabrir</button></form>{% endif %}</div>{% endfor %}</details>{% endif %}
